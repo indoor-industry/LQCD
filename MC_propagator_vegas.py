@@ -9,7 +9,7 @@ time_start = time.perf_counter()
 
 t_min = 0
 t_max = 4               #initial and final time of evolution
-a = 0.5                 #lattice spacing
+a = 0.25                 #lattice spacing
 T = t_max - t_min       #total evolution time
 x_min = -5              #integration range for possible paths
 x_max = 5
@@ -46,14 +46,19 @@ def main():
         #now integrate exp(-S) in the list of variables x trough values x_t
         integ = vegas.Integrator((len(t)) * [[x_min, x_max]])
 
-        result = integ(I, nitn=10, neval=1e5)
+        #train the integrator, discard results
+        integ(I, nitn=20, neval=1e6, alpha=0.4)
+
+        #integrate, keep results
+        result = integ(I, nitn=20, neval=1e6, alpha=0.2)
+        
         p[i] = result.mean
         sigma[i] = result.sdev
 
         analytic = np.exp(-0.5*(T))*(np.exp(-0.5*q**2)/((np.pi)**0.25))**2
         exact[i] = analytic
 
-        #print(result.summary())
+        print(result.summary())
         #print('result = %s    Q = %.2f' % (result, result.Q))
         print(i)
 
