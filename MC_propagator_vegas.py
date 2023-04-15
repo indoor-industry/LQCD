@@ -47,10 +47,10 @@ def main():
         integ = vegas.Integrator((len(t)) * [[x_min, x_max]])
 
         #train the integrator, discard results
-        integ(I, nitn=20, neval=1e6, alpha=0.4)
+        integ(I, nitn=20, neval=1e6, alpha=0.5)
 
         #integrate, keep results
-        result = integ(I, nitn=20, neval=1e6, alpha=0.2)
+        result = integ(I, nitn=20, neval=1e6, alpha=0.4)
         
         p[i] = result.mean
         sigma[i] = result.sdev
