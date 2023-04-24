@@ -6,16 +6,17 @@ import time
 import matplotlib.pyplot as plt
 from numba import njit
 
-#source and sink, choose x or x_cubed
+#source and sink, choose x or x3
 source = 'x'
+#choose improved action discretization y or n
+imp = 'n'
 
+m = 1
 eps = 1.4
 a = 0.5                                                 #lattice spacing
 N = 20                                                  #no of lattice sites
 N_cor = 20                                              #no of updates before storing a configuration to make samples statistically independent
-N_cf = 10000                                             #number of generated random paths (configurations)
-
-max_n = 8                                               #max value of n to show on plot
+N_cf = 100000                                             #number of generated random paths (configurations)
 
 @njit
 def update(x):
@@ -31,13 +32,18 @@ def update(x):
 def S(j, x):                                            # harm. osc. S
     jp = (j+1)%N                                        # next site
     jm = (j-1)%N                                        # previous site
-    return a*x[j]**2/2 + x[j]*(x[j]-x[jp]-x[jm])/a
+    jm2 = (j-2)%N
+    jp2 = (j+2)%N
+    if imp == 'n':
+        return a*x[j]**2/2 + m*x[j]*(x[j]-x[jp]-x[jm])/a
+    elif imp == 'y':
+        return a*x[j]**2/2 - (m/(2*a))*x[j]*(-(x[jm2]+x[jp2])/6+(x[jm]+x[jp])*(8/3)-x[j]*(5/2))
 
 @njit
 def compute_G(x, n):                                    #returns the mean correlation of sites n timesteps (n*a) apart
     g = 0
     for j in range(N):
-        if source == 'x_cubed':
+        if source == 'x3':
             g += (x[j]**3)*(x[(j+n)%N]**3)
         elif source == 'x':
             g += x[j]*x[(j+n)%N]
@@ -61,28 +67,23 @@ def deltaE(G_avgd_over_paths):                                          # Delta 
     return adE/a
 
 @njit
-def avg_over_paths(G):                                             # MC avg of G
-    G_avg_over_paths = np.empty(N)        
-    for n in range(N):                                  # compute MC averages
-        avg_G = 0
-        for alpha in range(len(G)):
-            avg_G += G[alpha][n]
-        avg_G = avg_G/len(G)
-        G_avg_over_paths[n] = avg_G
-    return G_avg_over_paths
+def avg(G):
+    sum = np.sum(G, axis=0)
+    avg_G = sum/len(G)
+    return avg_G
 
 @njit
 def sdev(G):                                            # std dev of G
-    return (np.abs(avg_over_paths(G**2)-avg_over_paths(G)**2))**0.5
+    return (np.abs(avg(G**2)-avg(G)**2))**0.5
 
 #generates a boostrapped copy of G[alpha] where alpha indices the different paths
 @njit
 def bootstrap(G):
-    N_cf = len(G)
-    G_bootstrap = []                                    # new ensemble
-    for i in range(N_cf):
-        alpha = int(np.random.uniform(0, N_cf))         # choose random config
-        G_bootstrap.append(G[alpha])                    # keep G[alpha]
+    N_bs = len(G)
+    G_bootstrap = np.empty((N_bs, N))                                    # new ensemble
+    for i in range(N_bs):
+        alpha = int(np.random.uniform(0, N_bs))         # choose random config
+        G_bootstrap[i] = G[alpha]                       # keep G[alpha]
     return G_bootstrap
 
 def bin(G, binsize):
@@ -98,12 +99,12 @@ def bin(G, binsize):
 
 @njit
 def bootstrap_deltaE(G, nbstrap=100):                   # Delta E + errors
-    avgE = deltaE(avg_over_paths(G))                                  # avg deltaE
     bsE = np.empty((nbstrap, N-1))
     for i in range(nbstrap):                            # bs copies of deltaE
         g = bootstrap(G)
-        bsE[i] = deltaE(avg_over_paths(g))
+        bsE[i] = deltaE(avg(g))
     sdevE = sdev(bsE)                                   # spread of deltaE’s
+    avgE = avg(bsE)
     return avgE, sdevE
 
 def main():
@@ -114,7 +115,6 @@ def main():
     G = np.zeros((N_cf, N), dtype=float)
 
     MCaverage(x, G)      #after running MCaverage G is now ready to be bootsrapped for statistical analysis
-
 
     #Bin data to check for statistical correlation in the aquisitions
     #std of G
@@ -128,18 +128,20 @@ def main():
     stand_dev_binned = sdev(binned_G)
 
     #confront the std of the binned and unbinned data, until binned data error grow with binsize there are correlations between measurements
-    print(stand_dev[:max_n]) 
-    print(stand_dev_binned[:max_n])
+    print(stand_dev) 
+    print(stand_dev_binned)
 
     #run and extraxt boostrapped statistics
     avgE, sdevE = bootstrap_deltaE(binned_G, nbstrap=10000)
 
     #plot using data from bootstrap
     t = [a*q for q in range(N-1)]
+
     plt.title(f'$\epsilon$={eps}, a={a}, N={N}, N_cor={N_cor}, N_cf={N_cf}')
-    plt.errorbar(t[:max_n], avgE[:max_n], yerr=sdevE[:max_n], fmt="o", label='computed')
-    plt.plot(t[:max_n], np.ones(len(t))[:max_n], label='exact')
+    plt.errorbar(t, avgE, yerr=sdevE, fmt="o", label='computed')
+    plt.plot(t, np.ones(len(t)), label='exact')
     plt.legend()
+    plt.axis([-0.1, 3.2, 0, 2])
 
     time_elapsed = (time.perf_counter() - time_start)
     print ("checkpoint %5.1f secs" % (time_elapsed))
