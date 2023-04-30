@@ -16,7 +16,7 @@ eps = 1.4
 a = 0.5                                                 #lattice spacing
 N = 20                                                  #no of lattice sites
 N_cor = 20                                              #no of updates before storing a configuration to make samples statistically independent
-N_cf = 100000                                             #number of generated random paths (configurations)
+N_cf = 10000                                             #number of generated random paths (configurations)
 
 @njit
 def update(x):
