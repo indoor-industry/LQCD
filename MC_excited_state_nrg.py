@@ -8,10 +8,12 @@ from numba import njit
 
 #source and sink, choose x or x3
 source = 'x'
-#choose improved action discretization y or n
-imp = 'n'
+#choose improved action discretization y or n or noghost
+imp = 'noghost'
 
 m = 1
+w = 1
+
 eps = 1.4
 a = 0.5                                                 #lattice spacing
 N = 20                                                  #no of lattice sites
@@ -35,9 +37,11 @@ def S(j, x):                                            # harm. osc. S
     jm2 = (j-2)%N
     jp2 = (j+2)%N
     if imp == 'n':
-        return a*x[j]**2/2 + m*x[j]*(x[j]-x[jp]-x[jm])/a
+        return a*m*(w**2)*x[j]**2/2 + m*x[j]*(x[j]-x[jp]-x[jm])/a
     elif imp == 'y':
-        return a*x[j]**2/2 - (m/(2*a))*x[j]*(-(x[jm2]+x[jp2])/6+(x[jm]+x[jp])*(8/3)-x[j]*(5/2))
+        return a*m*(w**2)*x[j]**2/2 - (m/(2*a))*x[j]*(-(x[jm2]+x[jp2])/6+(x[jm]+x[jp])*(8/3)-x[j]*(5/2))
+    elif imp == 'noghost':
+        return a*m*(w**2)*(1 + (a*w)**2/12)*x[j]**2/2 + m*x[j]*(x[j]-x[jp]-x[jm])/a
 
 @njit
 def compute_G(x, n):                                    #returns the mean correlation of sites n timesteps (n*a) apart
