@@ -3,3 +3,4 @@ numba
 scipy
 matplotlib
 vegas
+tqdm
