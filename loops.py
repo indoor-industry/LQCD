@@ -3,9 +3,16 @@ import time
 from tqdm import tqdm
 from numba import jit
 
+improve = 'y'
+
 N = 8
 eps = 0.24
+
 beta = 5.5      #includes tadpole improvement
+
+beta_improved = 1.719
+u_0 = 0.797
+
 a = 0.25        #units are fm
 Ncor = 50
 dim = 4
@@ -96,32 +103,184 @@ def gamma_plaquette(lattice, point, starting_direction):
     gamma = np.zeros((3, 3), np.complex128)
     for direction in range(dim):                                    #cycle over directions other than the starting_direction
         if direction != starting_direction:
-            right = call_link(point_clockwise, direction, lattice, dagger=False)                  #take link pointing "right"
-            right = np.ascontiguousarray(right)
+            link_right = call_link(point_clockwise, direction, lattice, dagger=False)                  #take link pointing "right"
+            link_right = np.ascontiguousarray(link_right)
             up(point_clockwise, direction)
             down(point_clockwise, starting_direction)                                    #move "right"
-            right_down = call_link(point_clockwise, starting_direction, lattice, dagger=True)    #take link moving "down"
-            right_down = np.ascontiguousarray(right_down)
+            link_right_down = call_link(point_clockwise, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_right_down = np.ascontiguousarray(link_right_down)
             down(point_clockwise, direction)                         #move "down"
-            right_down_left = call_link(point_clockwise, direction, lattice, dagger=True)             #take link moving "left"
-            right_down_left = np.ascontiguousarray(right_down_left)
+            link_right_down_left = call_link(point_clockwise, direction, lattice, dagger=True)             #take link moving "left"
+            link_right_down_left = np.ascontiguousarray(link_right_down_left)
             up(point_clockwise, starting_direction)
 
             down(point_anticlockwise, direction)
-            left = call_link(point_anticlockwise, direction, lattice, dagger=True)
-            left = np.ascontiguousarray(left)
+            link_left = call_link(point_anticlockwise, direction, lattice, dagger=True)
+            link_left = np.ascontiguousarray(link_left)
             down(point_anticlockwise, starting_direction)
-            left_down = call_link(point_anticlockwise, starting_direction, lattice, dagger=True)
-            left_down = np.ascontiguousarray(left_down)
-            left_down_right = call_link(point_anticlockwise, direction, lattice, dagger=False)
-            left_down_right = np.ascontiguousarray(left_down_right)
+            link_left_down = call_link(point_anticlockwise, starting_direction, lattice, dagger=True)
+            link_left_down = np.ascontiguousarray(link_left_down)
+            link_left_down_right = call_link(point_anticlockwise, direction, lattice, dagger=False)
+            link_left_down_right = np.ascontiguousarray(link_left_down_right)
             up(point_anticlockwise, direction)
             up(point_anticlockwise, starting_direction)
 
-            clockwise += (right @ right_down) @ right_down_left
-            anticlockwise += (left @ left_down) @ left_down_right
+            clockwise += (link_right @ link_right_down) @ link_right_down_left
+            anticlockwise += (link_left @ link_left_down) @ link_left_down_right
 
     gamma = clockwise + anticlockwise
+    
+    return gamma
+
+@jit(nopython=True)
+def gamma_rectangle(lattice, point, starting_direction):
+    
+    point_clockwise_vertical_down = point.copy()
+    point_anticlockwise_vertical_down = point.copy()
+    point_clockwise_vertical_up = point.copy()
+    point_anticlockwise_vertical_up = point.copy()
+    point_clockwise_horizontal = point.copy()
+    point_anticlockwise_horizontal = point.copy()
+
+    up(point_clockwise_vertical_down, starting_direction)                           #move up initial link
+    up(point_clockwise_vertical_up, starting_direction)                           #move up initial link
+    up(point_anticlockwise_vertical_down, starting_direction)                           #move up initial link
+    up(point_anticlockwise_vertical_up, starting_direction)                           #move up initial link
+    up(point_clockwise_horizontal, starting_direction)                           #move up initial link
+    up(point_anticlockwise_horizontal, starting_direction)                           #move up initial link
+
+    clockwise_vertical_up = np.zeros((3, 3), np.complex128)
+    clockwise_vertical_down = np.zeros((3, 3), np.complex128)
+    anticlockwise_vertical_up = np.zeros((3, 3), np.complex128)
+    anticlockwise_vertical_down = np.zeros((3, 3), np.complex128)
+    clockwise_horizonal = np.zeros((3, 3), np.complex128)
+    anticlockwise_horizontal = np.zeros((3, 3), np.complex128)
+    
+    gamma = np.zeros((3, 3), np.complex128)
+    for direction in range(dim):                                    #cycle over directions other than the starting_direction
+        if direction != starting_direction:
+####################################################################################################################
+            
+            link_up = call_link(point_clockwise_vertical_up, starting_direction, lattice, dagger=False)                  #take link pointing "right"
+            link_up = np.ascontiguousarray(link_up)
+            
+            #clockwise vertical up
+            up(point_clockwise_vertical_up, starting_direction)
+            link_up_right = call_link(point_clockwise_vertical_up, direction, lattice, dagger=False)
+            link_up_right = np.ascontiguousarray(link_up_right)
+            up(point_clockwise_vertical_up, direction)                                    #move "right"
+            down(point_clockwise_vertical_up, starting_direction)
+            link_up_right_down = call_link(point_clockwise_vertical_up, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_up_right_down = np.ascontiguousarray(link_up_right_down)
+            down(point_clockwise_vertical_up, starting_direction)                         #move "down"
+            link_up_right_down_down = call_link(point_clockwise_vertical_up, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_up_right_down_down = np.ascontiguousarray(link_up_right_down_down)
+            down(point_clockwise_vertical_up, direction)
+            link_up_right_down_down_left = call_link(point_clockwise_vertical_up, direction, lattice, dagger=True)
+            link_up_right_down_down_left = np.ascontiguousarray(link_up_right_down_down_left)
+            up(point_clockwise_vertical_up, starting_direction)
+
+            #anticlockwise vertical up
+            up(point_anticlockwise_vertical_up, starting_direction)
+            down(point_anticlockwise_vertical_up, direction)
+            link_up_left = call_link(point_anticlockwise_vertical_up, direction, lattice, dagger=True)
+            link_up_left = np.ascontiguousarray(link_up_left)
+            down(point_anticlockwise_vertical_up, starting_direction)
+            link_up_left_down = call_link(point_anticlockwise_vertical_up, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_up_left_down = np.ascontiguousarray(link_up_left_down)
+            down(point_anticlockwise_vertical_up, starting_direction)                         #move "down"
+            link_up_left_down_down = call_link(point_anticlockwise_vertical_up, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_up_left_down_down = np.ascontiguousarray(link_up_left_down_down)
+            link_up_left_down_down_right = call_link(point_anticlockwise_vertical_up, direction, lattice, dagger=False)
+            link_up_left_down_down_right = np.ascontiguousarray(link_up_left_down_down_right)
+            up(point_anticlockwise_vertical_up, direction)
+            up(point_anticlockwise_vertical_up, starting_direction)
+#########################################################################################################################################
+
+
+#########################################################################################################################################
+            link_right = call_link(point_clockwise_vertical_down, direction, lattice, dagger=False)                  #take link pointing "right"
+            link_right = np.ascontiguousarray(link_right)
+
+            #clockwise vertical down
+            up(point_clockwise_vertical_down, direction)
+            down(point_clockwise_vertical_down, starting_direction)                                    #move "right"
+            link_right_down = call_link(point_clockwise_vertical_down, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_right_down = np.ascontiguousarray(link_right_down)
+            down(point_clockwise_vertical_down, starting_direction)                         #move "down"
+            link_right_down_down = call_link(point_clockwise_vertical_down, starting_direction, lattice, dagger=True)             #take link moving "left"
+            link_right_down_down = np.ascontiguousarray(link_right_down_down)
+            down(point_clockwise_vertical_down, direction)
+            link_right_down_down_left = call_link(point_clockwise_vertical_down, direction, lattice, dagger=True)
+            link_right_down_down_left = np.ascontiguousarray(link_right_down_down_left)
+            link_right_down_down_left_up = call_link(point_clockwise_vertical_down, starting_direction, lattice, dagger=False)
+            link_right_down_down_left_up = np.ascontiguousarray(link_right_down_down_left_up)
+            up(point_clockwise_vertical_down, starting_direction)
+            up(point_clockwise_vertical_down, starting_direction)
+
+            #clockwise horizonal
+            up(point_clockwise_horizontal, direction)
+            link_right_right = call_link(point_clockwise_horizontal, direction, lattice, dagger=False)                  #take link pointing "right"
+            link_right_right = np.ascontiguousarray(link_right_right)
+            up(point_clockwise_horizontal, direction)
+            down(point_clockwise_horizontal, starting_direction)                                    #move "right"
+            link_right_right_down = call_link(point_clockwise_horizontal, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_right_right_down = np.ascontiguousarray(link_right_right_down)
+            down(point_clockwise_horizontal, direction)                         #move "down"
+            link_right_right_down_left = call_link(point_clockwise_horizontal, direction, lattice, dagger=True)             #take link moving "left"
+            link_right_right_down_left = np.ascontiguousarray(link_right_right_down_left)
+            down(point_clockwise_horizontal, direction)                         #move "down"
+            link_right_right_down_left_left = call_link(point_clockwise_horizontal, direction, lattice, dagger=True)             #take link moving "left"
+            link_right_right_down_left_left = np.ascontiguousarray(link_right_right_down_left_left)
+            up(point_clockwise_horizontal, starting_direction)
+################################################################################################################################
+
+
+###################################################################################################################################
+            down(point_anticlockwise_vertical_down, direction)
+            down(point_anticlockwise_horizontal, direction)
+            link_left = call_link(point_anticlockwise_vertical_down, direction, lattice, dagger=True)
+            link_left = np.ascontiguousarray(link_left)
+
+            #anticlockwise vertical down
+            down(point_anticlockwise_vertical_down, starting_direction)
+            link_left_down = call_link(point_anticlockwise_vertical_down, starting_direction, lattice, dagger=True)
+            link_left_down = np.ascontiguousarray(link_left_down)
+            down(point_anticlockwise_vertical_down, starting_direction)
+            link_left_down_down = call_link(point_anticlockwise_vertical_down, starting_direction, lattice, dagger=True)
+            link_left_down_down = np.ascontiguousarray(link_left_down_down)
+            link_left_down_down_right = call_link(point_anticlockwise_vertical_down, direction, lattice, dagger=False)
+            link_left_down_down_right = np.ascontiguousarray(link_left_down_down_right)
+            up(point_anticlockwise_vertical_down, direction)
+            link_left_down_down_right_up = call_link(point_anticlockwise_vertical_down, starting_direction, lattice, dagger=False)
+            link_left_down_down_right_up = np.ascontiguousarray(link_left_down_down_right_up)
+            up(point_anticlockwise_vertical_down, starting_direction)
+            up(point_anticlockwise_vertical_down, starting_direction)
+
+            #anticlockwise horizontal
+            down(point_anticlockwise_horizontal, direction)
+            link_left_left = call_link(point_anticlockwise_horizontal, direction, lattice, dagger=True)
+            link_left_left = np.ascontiguousarray(link_left_left)
+            down(point_anticlockwise_horizontal, starting_direction)
+            link_left_left_down = call_link(point_anticlockwise_horizontal, starting_direction, lattice, dagger=True)
+            link_left_left_down = np.ascontiguousarray(link_left_left_down)
+            link_left_left_down_right = call_link(point_anticlockwise_horizontal, direction, lattice, dagger=False)
+            link_left_left_down_right = np.ascontiguousarray(link_left_left_down_right)
+            up(point_anticlockwise_horizontal, direction)
+            link_left_left_down_right_right = call_link(point_anticlockwise_horizontal, direction, lattice, dagger=False)
+            link_left_left_down_right_right = np.ascontiguousarray(link_left_left_down_right_right)
+            up(point_anticlockwise_horizontal, direction)
+            up(point_anticlockwise_horizontal, starting_direction)
+###########################################################################################################################################
+
+            clockwise_vertical_up += link_up @ link_up_right @ link_up_right_down @  link_up_right_down_down @ link_up_right_down_down_left
+            clockwise_vertical_down += link_right @ link_right_down @ link_right_down_down @ link_right_down_down_left @ link_right_down_down_left_up
+            anticlockwise_vertical_up += link_up @ link_up_left @ link_up_left_down @ link_up_left_down_down @ link_up_left_down_down_right
+            anticlockwise_vertical_down += link_left @ link_left_down @ link_left_down_down @ link_left_down_down_right @ link_left_down_down_right_up
+            clockwise_horizonal += link_right @ link_right_right @ link_right_right_down @ link_right_right_down_left @ link_right_right_down_left_left
+            anticlockwise_horizontal += link_left @ link_left_left @ link_left_left_down @ link_left_left_down_right @ link_left_left_down_right_right
+
+    gamma = clockwise_vertical_up + clockwise_vertical_down + anticlockwise_vertical_up + anticlockwise_vertical_down + clockwise_horizonal + anticlockwise_horizontal
     
     return gamma
 
@@ -133,17 +292,33 @@ def metropolis_update(lattice, matrices, hits=10):
                 for z in range(N):
                     for mu in range(dim):
                         point = [t, x, y, z]
-                        gamma = gamma_plaquette(lattice, point, mu)
-                        for i in range(hits):
-                            rand = np.random.randint(2*N_mat)
-                            M = matrices[rand]
-                            old_link = call_link(point, mu, lattice, dagger=False)
-                            old_link = np.ascontiguousarray(old_link)
-                            new_link = M @ old_link
+                        if improve == 'n':
+                            gamma_P = gamma_plaquette(lattice, point, mu)
+                            for i in range(hits):
+                                rand = np.random.randint(2*N_mat)
+                                M = matrices[rand]
+                                old_link = call_link(point, mu, lattice, dagger=False)
+                                old_link = np.ascontiguousarray(old_link)
+                                new_link = M @ old_link
 
-                            dS= -(beta/3)*np.real(np.trace((new_link - old_link) @ gamma))
-                            if dS < 0 or np.exp(-dS) > np.random.uniform(0, 1):
-                                lattice[point[0], point[1], point[2], point[3], mu] = new_link
+                                dS = -(beta/3)*np.real(np.trace((new_link - old_link) @ gamma_P))
+                                if dS < 0 or np.exp(-dS) > np.random.uniform(0, 1):
+                                    lattice[point[0], point[1], point[2], point[3], mu] = new_link
+
+                        elif improve == 'y':
+                            gamma_P = gamma_plaquette(lattice, point, mu)
+                            gamma_R = gamma_rectangle(lattice, point, mu)
+                            for i in range(hits):
+                                rand = np.random.randint(2*N_mat)
+                                M = matrices[rand]
+                                old_link = call_link(point, mu, lattice, dagger=False)
+                                old_link = np.ascontiguousarray(old_link)
+                                new_link = M @ old_link
+
+                                dS = -(beta_improved/3)*(5/(3*u_0**4)*np.real(np.trace((new_link-old_link) @ gamma_P))-1/(12*u_0**6)*np.real(np.trace((new_link - old_link) @ gamma_R)))
+                                if dS < 0 or np.exp(-dS) > np.random.uniform(0, 1):
+                                    lattice[point[0], point[1], point[2], point[3], mu] = new_link
+
 
 @jit(nopython=True)
 def wilson_plaquette(lattice, starting_point):
@@ -202,6 +377,43 @@ def wilson_rectangle(lattice, starting_point):
     return w_rectangle/6
 
 @jit(nopython=True)
+def wilson_big_plaquette(lattice, starting_point):
+
+    point = starting_point.copy()
+
+    w_big_plaquette = 0
+    for starting_direction in range(dim):
+        for direction in range(starting_direction):
+            link_up = call_link(point, starting_direction, lattice, dagger=False)
+            link_up = np.ascontiguousarray(link_up)
+            up(point, starting_direction)                                    #move "up"
+            link_up_up = call_link(point, starting_direction, lattice, dagger=False)
+            link_up_up = np.ascontiguousarray(link_up_up)
+            up(point, starting_direction)
+            link_right = call_link(point, direction, lattice, dagger=False)    #take link moving "down"
+            link_right = np.ascontiguousarray(link_right)
+            up(point, direction)                                    #move "up"
+            link_right_right = call_link(point, direction, lattice, dagger=False)    #take link moving "down"
+            link_right_right = np.ascontiguousarray(link_right_right)
+            up(point, direction)
+            down(point, starting_direction)
+            link_down = call_link(point, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_down = np.ascontiguousarray(link_down)
+            down(point, starting_direction)
+            link_down_down = call_link(point, starting_direction, lattice, dagger=True)    #take link moving "down"
+            link_down_down = np.ascontiguousarray(link_down_down)
+            down(point, direction)
+            link_left = call_link(point, direction, lattice, dagger=True)
+            link_left = np.ascontiguousarray(link_left)
+            down(point, direction)
+            link_left_left = call_link(point, direction, lattice, dagger=True)
+            link_left_left = np.ascontiguousarray(link_left_left)
+
+            w_big_plaquette += (1/3)*np.real(np.trace(link_up @ link_up_up @ link_right @ link_right_right @ link_down @ link_down_down @ link_left @ link_left_left))
+
+    return w_big_plaquette/6
+
+@jit(nopython=True)
 def wilson_over_lattice(lattice, matrices, shape):
     W_plaquettes = np.zeros(Ncf, dtype=np.float64)
     for alpha in range(Ncf):
@@ -216,6 +428,8 @@ def wilson_over_lattice(lattice, matrices, shape):
                             W_plaquettes[alpha] += wilson_plaquette(lattice, point)
                         elif shape == '2axa':
                             W_plaquettes[alpha] += wilson_rectangle(lattice, point)
+                        elif shape == '2ax2a':
+                            W_plaquettes[alpha] += wilson_big_plaquette(lattice, point)
         print(W_plaquettes[alpha] / N**dim)
     return W_plaquettes/N**dim, shape
 
@@ -229,8 +443,8 @@ def main():
     for i in tqdm(range(2*Ncor)):
         metropolis_update(lattice , Ms)       #thermalize lattice for 2*Ncor steps
 
-    axa, shape = wilson_over_lattice(lattice, Ms, shape='2axa')
-    np.savetxt(f'data/{shape}.csv', axa)
+    axa, shape = wilson_over_lattice(lattice, Ms, shape='2ax2a')
+    np.savetxt(f'data/{shape} a={a} improved={improve}.csv', axa)
 
     time_elapsed = (time.perf_counter() - time_start)
     print ("checkpoint %5.1f secs" % (time_elapsed))
