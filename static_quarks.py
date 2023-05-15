@@ -3,25 +3,36 @@ import time
 from tqdm import tqdm
 from numba import jit
 
-improve = 'y'
-
+#choose 'n' for unimproved antion and 'y' otherwise
+improve = 'n'
+#atoms per side of lattice
 N = 8
-eps = 0.24
-
+#parameter for creation of SU(3) matrices, affects lattice creation and metropolis acceptance ratio
+eps_mat = 0.24
+#parameter for smearing
+eps_smear = 1/12
+#action parameter
 beta = 5.5      #includes tadpole improvement
-
+#improved action parameter
 beta_improved = 1.719
+#tadpole improvement for imporved action
 u_0 = 0.797
-
-a = 0.25        #units are fm
+#lattice spacing
+a = 0.25
+#number of lattice evolutions before acquiring a measurement to avoid correlations
 Ncor = 50
+#space+time dimensions
 dim = 4
+#size of pool of SU(3) matrices (includes just as many hermitian conjugates of them)
 N_mat = 100
+#number of aquisitions performed
 Ncf = 10
 
+#fucntion to check if a matrix is unitary
 def is_unitary(m):
     return np.allclose(np.eye(m.shape[0]), m.conj().T @ m)
 
+#homemade factorial function for numba
 @jit(nopython=True)
 def factorial(x):
     fact: float = 1
@@ -45,7 +56,7 @@ def SU3(steps=30):
     #make it unitary
     U = np.zeros((3, 3), np.complex128)
     for i in range(steps):
-        U = U + ((1j*eps)**i/factorial(i))*np.linalg.matrix_power(H, i)
+        U = U + ((1j*eps_mat)**i/factorial(i))*np.linalg.matrix_power(H, i)
     #make it special
     SU = U/(np.linalg.det(U))**(1/3)
     return SU
@@ -58,6 +69,7 @@ def matrices(N_mat):
         M = SU3()
         Ms[i] = M
         Ms[N_mat+i] = dag(M)
+    print('Matrices ready')
     return Ms
 
 #generate lattice with identity matrices on each node
@@ -72,16 +84,20 @@ def initialise_lattice(lattice_size, dimensions):
                         lat[t][x][y][z][dim] = np.identity(3, np.complex128)
     return lat
 
+#BOTH UP AND DOWN FUNCTIONS KEEP MEMORY OF THE NEW POSITION OF THE POINT
+#move a coordinate point up a direction in the lattice
 @jit(nopython=True)
 def up(coordinate, direction):
     coordinate[direction] = (coordinate[direction] + 1)%N
     return coordinate
 
+#move a coordinate point down a direction in the lattice
 @jit(nopython=True)
 def down(coordinate, direction):
     coordinate[direction] = (coordinate[direction] - 1)%N
     return coordinate
 
+#call a link SU(3) at a certain point in the lattice given a direction or its hermitian conjugate if direction is negative
 @jit(nopython=True)
 def call_link(point, direction, lattice, dagger:bool):
     if dagger == False:
@@ -89,6 +105,7 @@ def call_link(point, direction, lattice, dagger:bool):
     elif dagger == True:
         return dag(lattice[point[0], point[1], point[2], point[3], direction])
 
+#calculate the main part of the variation in action for the unimproved action
 @jit(nopython=True)
 def gamma_plaquette(lattice, point, starting_direction):
     
@@ -105,14 +122,14 @@ def gamma_plaquette(lattice, point, starting_direction):
         if direction != starting_direction:
             link_right = call_link(point_clockwise, direction, lattice, dagger=False)                  #take link pointing "right"
             link_right = np.ascontiguousarray(link_right)
-            up(point_clockwise, direction)
-            down(point_clockwise, starting_direction)                                    #move "right"
-            link_right_down = call_link(point_clockwise, starting_direction, lattice, dagger=True)    #take link moving "down"
+            up(point_clockwise, direction)                                                             #move "up"
+            down(point_clockwise, starting_direction)                                                  #move "down"
+            link_right_down = call_link(point_clockwise, starting_direction, lattice, dagger=True)     #take link pointing "down"
             link_right_down = np.ascontiguousarray(link_right_down)
-            down(point_clockwise, direction)                         #move "down"
-            link_right_down_left = call_link(point_clockwise, direction, lattice, dagger=True)             #take link moving "left"
+            down(point_clockwise, direction)                                                           #move "left"
+            link_right_down_left = call_link(point_clockwise, direction, lattice, dagger=True)         #take link pointing "left"
             link_right_down_left = np.ascontiguousarray(link_right_down_left)
-            up(point_clockwise, starting_direction)
+            up(point_clockwise, starting_direction)                                                    #back to initial position
 
             down(point_anticlockwise, direction)
             link_left = call_link(point_anticlockwise, direction, lattice, dagger=True)
@@ -132,6 +149,7 @@ def gamma_plaquette(lattice, point, starting_direction):
     
     return gamma
 
+#another part in the variation of the action for the imporved case, much longer but same basic reasoning as plaquette
 @jit(nopython=True)
 def gamma_rectangle(lattice, point, starting_direction):
     
@@ -284,6 +302,7 @@ def gamma_rectangle(lattice, point, starting_direction):
     
     return gamma
 
+#metropolis update function
 @jit(nopython=True)
 def metropolis_update(lattice, matrices, hits=10):
     for t in range(N):
@@ -294,7 +313,7 @@ def metropolis_update(lattice, matrices, hits=10):
                         point = [t, x, y, z]
                         if improve == 'n':
                             gamma_P = gamma_plaquette(lattice, point, mu)
-                            for i in range(hits):
+                            for i in range(hits):                               #update a number of times before acquiring measurements
                                 rand = np.random.randint(2*N_mat)
                                 M = matrices[rand]
                                 old_link = call_link(point, mu, lattice, dagger=False)
@@ -319,103 +338,38 @@ def metropolis_update(lattice, matrices, hits=10):
                                 if dS < 0 or np.exp(-dS) > np.random.uniform(0, 1):
                                     lattice[point[0], point[1], point[2], point[3], mu] = new_link
 
-
 @jit(nopython=True)
-def wilson_plaquette(lattice, starting_point):
+def planar_loops(lattice, point, length, duration):
+    W_planar=0
+    for space_direction in range(1, 4, 1):
+        loop = np.identity(3, np.complex128)
+        for time in range(duration):
+            link = call_link(point, 0, lattice, dagger=False)
+            link = np.ascontiguousarray(link)
+            loop = loop @ link
+            up(point, 0)
+        for space in range(length):
+            link = call_link(point, space_direction, lattice, dagger=False)
+            link = np.ascontiguousarray(link)
+            loop = loop @ link
+            up(point, space_direction)
+        for time_reverse in range(duration):
+            down(point, 0)
+            link = call_link(point, 0, lattice, dagger=True)
+            link = np.ascontiguousarray(link)
+            loop = loop @ link
+        for space_reverse in range(length):
+            down(point, space_direction)
+            link = call_link(point, space_direction, lattice, dagger=True)
+            link = np.ascontiguousarray(link)
+            loop = loop @ link
+        W_planar += (1/3)*np.real(np.trace(loop))
+    return W_planar/3
 
-    point = starting_point.copy()
-
-    w_plaquette = 0
-    for starting_direction in range(dim):
-        for direction in range(starting_direction):
-            link_up = call_link(point, starting_direction, lattice, dagger=False)
-            link_up = np.ascontiguousarray(link_up)
-            up(point, starting_direction)                                    #move "up"
-            link_right = call_link(point, direction, lattice, dagger=False)    #take link moving "down"
-            link_right = np.ascontiguousarray(link_right)
-            up(point, direction)                                    #move "up"
-            down(point, starting_direction)
-            link_down = call_link(point, starting_direction, lattice, dagger=True)    #take link moving "down"
-            link_down = np.ascontiguousarray(link_down)
-            down(point, direction)
-            link_left = call_link(point, direction, lattice, dagger=True)
-            link_left = np.ascontiguousarray(link_left)
-
-            w_plaquette += (1/3)*np.real(np.trace(link_up @ link_right @ link_down @ link_left))
-
-    return w_plaquette/6
-
+#calculate wichever shape of wilson loops opver the whole lattice and average
 @jit(nopython=True)
-def wilson_rectangle(lattice, starting_point):
-
-    point = starting_point.copy()
-
-    w_rectangle = 0
-    for starting_direction in range(dim):
-        for direction in range(starting_direction):
-            link_up = call_link(point, starting_direction, lattice, dagger=False)
-            link_up = np.ascontiguousarray(link_up)
-            up(point, starting_direction)                                    #move "up"
-            link_right = call_link(point, direction, lattice, dagger=False)    #take link moving "down"
-            link_right = np.ascontiguousarray(link_right)
-            up(point, direction)                                    #move "up"
-            link_right_right = call_link(point, direction, lattice, dagger=False)    #take link moving "down"
-            link_right_right = np.ascontiguousarray(link_right_right)
-            up(point, direction)
-            down(point, starting_direction)
-            link_down = call_link(point, starting_direction, lattice, dagger=True)    #take link moving "down"
-            link_down = np.ascontiguousarray(link_down)
-            down(point, direction)
-            link_left = call_link(point, direction, lattice, dagger=True)
-            link_left = np.ascontiguousarray(link_left)
-            down(point, direction)
-            link_left_left = call_link(point, direction, lattice, dagger=True)
-            link_left_left = np.ascontiguousarray(link_left_left)
-
-            w_rectangle += (1/3)*np.real(np.trace(link_up @ link_right @ link_right_right @ link_down @ link_left @ link_left_left))
-
-    return w_rectangle/6
-
-@jit(nopython=True)
-def wilson_big_plaquette(lattice, starting_point):
-
-    point = starting_point.copy()
-
-    w_big_plaquette = 0
-    for starting_direction in range(dim):
-        for direction in range(starting_direction):
-            link_up = call_link(point, starting_direction, lattice, dagger=False)
-            link_up = np.ascontiguousarray(link_up)
-            up(point, starting_direction)                                    #move "up"
-            link_up_up = call_link(point, starting_direction, lattice, dagger=False)
-            link_up_up = np.ascontiguousarray(link_up_up)
-            up(point, starting_direction)
-            link_right = call_link(point, direction, lattice, dagger=False)    #take link moving "down"
-            link_right = np.ascontiguousarray(link_right)
-            up(point, direction)                                    #move "up"
-            link_right_right = call_link(point, direction, lattice, dagger=False)    #take link moving "down"
-            link_right_right = np.ascontiguousarray(link_right_right)
-            up(point, direction)
-            down(point, starting_direction)
-            link_down = call_link(point, starting_direction, lattice, dagger=True)    #take link moving "down"
-            link_down = np.ascontiguousarray(link_down)
-            down(point, starting_direction)
-            link_down_down = call_link(point, starting_direction, lattice, dagger=True)    #take link moving "down"
-            link_down_down = np.ascontiguousarray(link_down_down)
-            down(point, direction)
-            link_left = call_link(point, direction, lattice, dagger=True)
-            link_left = np.ascontiguousarray(link_left)
-            down(point, direction)
-            link_left_left = call_link(point, direction, lattice, dagger=True)
-            link_left_left = np.ascontiguousarray(link_left_left)
-
-            w_big_plaquette += (1/3)*np.real(np.trace(link_up @ link_up_up @ link_right @ link_right_right @ link_down @ link_down_down @ link_left @ link_left_left))
-
-    return w_big_plaquette/6
-
-@jit(nopython=True)
-def wilson_over_lattice(lattice, matrices, shape):
-    W_plaquettes = np.zeros(Ncf, dtype=np.float64)
+def planar_loop_over_lattice(lattice, matrices, length, duration):
+    W_planar = np.zeros(Ncf, dtype=np.float64)
     for alpha in range(Ncf):
         for skip in range(Ncor):
             metropolis_update(lattice, matrices, hits=10)
@@ -424,14 +378,92 @@ def wilson_over_lattice(lattice, matrices, shape):
                 for y in range(N):
                     for z in range(N):
                         point = np.array([t, x, y, z])
-                        if shape == 'axa':
-                            W_plaquettes[alpha] += wilson_plaquette(lattice, point)
-                        elif shape == '2axa':
-                            W_plaquettes[alpha] += wilson_rectangle(lattice, point)
-                        elif shape == '2ax2a':
-                            W_plaquettes[alpha] += wilson_big_plaquette(lattice, point)
-        print(W_plaquettes[alpha] / N**dim)
-    return W_plaquettes/N**dim, shape
+                        W_planar[alpha] += planar_loops(lattice, point, length, duration)
+        
+        print(W_planar[alpha] / N**dim)
+    
+    return W_planar/N**dim
+
+@jit(nopython=True)
+def Wilson(lattice, Ms, max_r, min_t, max_t):
+    W_planar_r_t = np.empty((max_r, max_t-min_t))
+    W_planar_r_t_err = np.empty((max_r, max_t-min_t))
+    for r in range(1, max_r):
+        for t in range(min_t, max_t):
+            W_r = planar_loop_over_lattice(lattice, Ms, r, t)
+            W_planar_r_t[r-1, t-1] = mean(W_r)
+            W_planar_r_t_err[r-1, t-1] = stdev(W_r)
+
+    return W_planar_r_t, W_planar_r_t_err, r
+
+@jit(nopython=True)
+def gauge_covariant_derivative(lattice, point, starting_direction):
+    link_up = call_link(point, starting_direction, lattice, dagger=False)
+    link_up = np.ascontiguousarray(link_up)
+    for direction in range(dim):
+
+        link_right = call_link(point, direction, lattice, dagger=False)
+        link_right = np.ascontiguousarray(link_right)
+        up(point, direction)
+        link_right_up = call_link(point, starting_direction, lattice, dagger=False)
+        link_right_up = np.ascontiguousarray(link_right_up)
+        up(point, starting_direction)
+        down(point, direction)
+        link_right_up_left = call_link(point, direction, lattice, dagger=True)
+        link_right_up_left = np.ascontiguousarray(link_right_up_left)
+
+        down(point, direction)
+        link_left_up_right = call_link(point, direction, lattice, dagger=False)
+        link_left_up_right = np.ascontiguousarray(link_left_up_right)
+        down(point, starting_direction)
+        link_left_up = call_link(point, starting_direction, lattice, dagger=False)
+        link_left_up = np.ascontiguousarray(link_left_up)
+        link_left = call_link(point, direction, lattice, dagger=True)
+        link_left = np.ascontiguousarray(link_left)
+        up(point, direction)
+        up(point, starting_direction)
+
+    loop_right = link_right @ link_right_up @ link_right_up_left
+    loop_left = link_left @ link_left_up @ link_left_up_right
+
+    smeared_link = (1/(u_0*a)**2)*(loop_right - 2*(u_0**2)*link_up + loop_left)
+    return smeared_link
+
+@jit(nopython=True)        
+def smear_lattice(lattice, smearing_eps):
+    smeared_lattice = np.empty((N, N, N, N, dim, 3, 3), dtype=np.complex128)
+    for t in range(N):
+        for x in range(N):
+            for y in range(N):
+                for z in range(N):
+                    point = np.array([t, x, y, z])
+                    for direction in range(dim):
+                        smeared_lattice[t, x, y, z, direction] = lattice[t, x, y, z, direction] + smearing_eps*(a**2)*gauge_covariant_derivative(lattice, point, direction)
+
+    return smeared_lattice
+
+@jit(nopython=True)
+def smearings(lattice, number_of_smears):
+    repeatedly_smeared_lattice = lattice.copy()
+    for i in number_of_smears:
+        repeatedly_smeared_lattice = smear_lattice(repeatedly_smeared_lattice, smearing_eps=1/12)
+    return repeatedly_smeared_lattice
+
+@jit(nopython=True)
+def mean(data):
+    return np.sum(data)/len(data)
+
+@jit(nopython=True)
+def stdev(data, ddof=0):
+    #calculate mean of data
+    mean_data = sum(data) / len(data)
+    # Calculate squared differences for each data point and mean
+    squared_diffs = [(x - mean_data) ** 2 for x in data]
+    # Calculate the average of the squared differences
+    variance = sum(squared_diffs) / (len(squared_diffs) - ddof)
+    # Calculate the square root of the variance
+    stddev = variance ** 0.5
+    return stddev
 
 def main():
 
@@ -443,8 +475,18 @@ def main():
     for i in tqdm(range(2*Ncor)):
         metropolis_update(lattice , Ms)       #thermalize lattice for 2*Ncor steps
 
-    axa, shape = wilson_over_lattice(lattice, Ms, shape='2ax2a')
-    np.savetxt(f'data/{shape} a={a} improved={improve}.csv', axa)
+    #lattice = np.load('data/lattice imp=n.npy')
+
+    max_r = 3
+    min_t = 4
+    max_t = 6
+    W_planar_r_t, W_planar_r_t_err, radius = Wilson(lattice, Ms, max_r, min_t, max_t)
+
+    np.save('data/W_rt.npy', W_planar_r_t)
+    np.save('data/W_rt_err.npy', W_planar_r_t_err)
+
+    radius = range(1, max_r)
+    np.save('data/radius.npy', radius)
 
     time_elapsed = (time.perf_counter() - time_start)
     print ("checkpoint %5.1f secs" % (time_elapsed))
