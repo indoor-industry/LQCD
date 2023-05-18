@@ -4,13 +4,13 @@ from tqdm import tqdm
 from numba import jit
 
 #choose 'n' for unimproved antion and 'y' otherwise
-improve = 'n'
+improve = False
+#lattice smearing
+smearing = False
 #atoms per side of lattice
 N = 8
 #parameter for creation of SU(3) matrices, affects lattice creation and metropolis acceptance ratio
 eps_mat = 0.24
-#parameter for smearing
-eps_smear = 1/12
 #action parameter
 beta = 5.5      #includes tadpole improvement
 #improved action parameter
@@ -45,6 +45,16 @@ def factorial(x):
 @jit(nopython=True)
 def dag(M):
     return M.conj().T
+
+@jit(nopython=True)
+def matrix_sqrt(M):
+    # Perform eigenvalue decomposition
+    eigenvalues, eigenvectors = np.linalg.eig(M)
+    # Compute the square root of eigenvalues
+    sqrt_eigenvalues = np.sqrt(eigenvalues)
+    # Reconstruct the matrix with the square root of eigenvalues
+    M_sqrt = eigenvectors.dot(np.diag(sqrt_eigenvalues)).dot(np.linalg.inv(eigenvectors))
+    return M_sqrt
 
 #generate a random SU(3) matrix
 @jit(nopython=True)
@@ -82,6 +92,7 @@ def initialise_lattice(lattice_size, dimensions):
                 for z in range(lattice_size):
                     for dim in range(dimensions):
                         lat[t][x][y][z][dim] = np.identity(3, np.complex128)
+    print('lattice initialized')
     return lat
 
 #BOTH UP AND DOWN FUNCTIONS KEEP MEMORY OF THE NEW POSITION OF THE POINT
@@ -311,20 +322,7 @@ def metropolis_update(lattice, matrices, hits=10):
                 for z in range(N):
                     for mu in range(dim):
                         point = [t, x, y, z]
-                        if improve == 'n':
-                            gamma_P = gamma_plaquette(lattice, point, mu)
-                            for i in range(hits):                               #update a number of times before acquiring measurements
-                                rand = np.random.randint(2*N_mat)
-                                M = matrices[rand]
-                                old_link = call_link(point, mu, lattice, dagger=False)
-                                old_link = np.ascontiguousarray(old_link)
-                                new_link = M @ old_link
-
-                                dS = -(beta/3)*np.real(np.trace((new_link - old_link) @ gamma_P))
-                                if dS < 0 or np.exp(-dS) > np.random.uniform(0, 1):
-                                    lattice[point[0], point[1], point[2], point[3], mu] = new_link
-
-                        elif improve == 'y':
+                        if improve:
                             gamma_P = gamma_plaquette(lattice, point, mu)
                             gamma_R = gamma_rectangle(lattice, point, mu)
                             for i in range(hits):
@@ -337,6 +335,21 @@ def metropolis_update(lattice, matrices, hits=10):
                                 dS = -(beta_improved/3)*(5/(3*u_0**4)*np.real(np.trace((new_link-old_link) @ gamma_P))-1/(12*u_0**6)*np.real(np.trace((new_link - old_link) @ gamma_R)))
                                 if dS < 0 or np.exp(-dS) > np.random.uniform(0, 1):
                                     lattice[point[0], point[1], point[2], point[3], mu] = new_link
+                        
+                        else:
+                            gamma_P = gamma_plaquette(lattice, point, mu)
+                            for i in range(hits):                               #update a number of times before acquiring measurements
+                                rand = np.random.randint(2*N_mat)
+                                M = matrices[rand]
+                                old_link = call_link(point, mu, lattice, dagger=False)
+                                old_link = np.ascontiguousarray(old_link)
+                                new_link = M @ old_link
+
+                                dS = -(beta/3)*np.real(np.trace((new_link - old_link) @ gamma_P))
+                                if dS < 0 or np.exp(-dS) > np.random.uniform(0, 1):
+                                    lattice[point[0], point[1], point[2], point[3], mu] = new_link
+
+
 
 @jit(nopython=True)
 def planar_loops(lattice, point, length, duration):
@@ -373,6 +386,10 @@ def planar_loop_over_lattice(lattice, matrices, length, duration):
     for alpha in range(Ncf):
         for skip in range(Ncor):
             metropolis_update(lattice, matrices, hits=10)
+        
+        if smearing:
+            lattice = smearings(lattice, number_of_smears=4)
+
         for t in range(N):
             for x in range(N):
                 for y in range(N):
@@ -386,48 +403,64 @@ def planar_loop_over_lattice(lattice, matrices, length, duration):
 
 @jit(nopython=True)
 def Wilson(lattice, Ms, max_r, min_t, max_t):
-    W_planar_r_t = np.empty((max_r, max_t-min_t))
-    W_planar_r_t_err = np.empty((max_r, max_t-min_t))
-    for r in range(1, max_r):
-        for t in range(min_t, max_t):
+    W_planar_r_t = np.zeros((max_t, max_r))
+    W_planar_r_t_err = np.zeros((max_t, max_r))
+    for t in range(min_t, max_t):
+        for r in range(1, max_r):
             W_r = planar_loop_over_lattice(lattice, Ms, r, t)
-            W_planar_r_t[r-1, t-1] = mean(W_r)
-            W_planar_r_t_err[r-1, t-1] = stdev(W_r)
+            W_planar_r_t[t, r] = mean(W_r)
+            W_planar_r_t_err[t, r] = stdev(W_r)
 
-    return W_planar_r_t, W_planar_r_t_err, r
+    return W_planar_r_t, W_planar_r_t_err
 
 @jit(nopython=True)
-def gauge_covariant_derivative(lattice, point, starting_direction):
-    link_up = call_link(point, starting_direction, lattice, dagger=False)
+def gauge_covariant_derivative(lattice, point1, starting_direction):
+    link_up = call_link(point1, starting_direction, lattice, dagger=False)
     link_up = np.ascontiguousarray(link_up)
+    
+    smeared_link = np.zeros((3, 3), dtype=np.complex128)
     for direction in range(dim):
 
-        link_right = call_link(point, direction, lattice, dagger=False)
+        link_right = call_link(point1, direction, lattice, dagger=False)
         link_right = np.ascontiguousarray(link_right)
-        up(point, direction)
-        link_right_up = call_link(point, starting_direction, lattice, dagger=False)
+        up(point1, direction)
+        link_right_up = call_link(point1, starting_direction, lattice, dagger=False)
         link_right_up = np.ascontiguousarray(link_right_up)
-        up(point, starting_direction)
-        down(point, direction)
-        link_right_up_left = call_link(point, direction, lattice, dagger=True)
+        up(point1, starting_direction)
+        down(point1, direction)
+        link_right_up_left = call_link(point1, direction, lattice, dagger=True)
         link_right_up_left = np.ascontiguousarray(link_right_up_left)
 
-        down(point, direction)
-        link_left_up_right = call_link(point, direction, lattice, dagger=False)
+        down(point1, direction)
+        link_left_up_right = call_link(point1, direction, lattice, dagger=False)
         link_left_up_right = np.ascontiguousarray(link_left_up_right)
-        down(point, starting_direction)
-        link_left_up = call_link(point, starting_direction, lattice, dagger=False)
+        down(point1, starting_direction)
+        link_left_up = call_link(point1, starting_direction, lattice, dagger=False)
         link_left_up = np.ascontiguousarray(link_left_up)
-        link_left = call_link(point, direction, lattice, dagger=True)
+        link_left = call_link(point1, direction, lattice, dagger=True)
         link_left = np.ascontiguousarray(link_left)
-        up(point, direction)
-        up(point, starting_direction)
+        up(point1, direction)
 
-    loop_right = link_right @ link_right_up @ link_right_up_left
-    loop_left = link_left @ link_left_up @ link_left_up_right
+        loop_right = link_right @ link_right_up @ link_right_up_left
+        loop_left = link_left @ link_left_up @ link_left_up_right
 
-    smeared_link = (1/(u_0*a)**2)*(loop_right - 2*(u_0**2)*link_up + loop_left)
+        smeared_link = smeared_link + (1/(u_0*a)**2)*(loop_right - 2*(u_0**2)*link_up + loop_left)
+
     return smeared_link
+
+@jit(nopython=True)
+def project_to_SU3(M):
+    M_dagger = dag(M)
+
+    M_square = M_dagger @ M
+
+    M_square_sqrt = matrix_sqrt(M_square)
+
+    U3_projected = M @ np.linalg.inv(M_square_sqrt)
+
+    SU3_projected = U3_projected/(np.linalg.det(U3_projected)**(1/3))
+
+    return SU3_projected
 
 @jit(nopython=True)        
 def smear_lattice(lattice, smearing_eps):
@@ -439,13 +472,14 @@ def smear_lattice(lattice, smearing_eps):
                     point = np.array([t, x, y, z])
                     for direction in range(dim):
                         smeared_lattice[t, x, y, z, direction] = lattice[t, x, y, z, direction] + smearing_eps*(a**2)*gauge_covariant_derivative(lattice, point, direction)
+                        smeared_lattice[t, x, y, z, direction] = project_to_SU3(smeared_lattice[t, x, y, z, direction])
 
     return smeared_lattice
 
 @jit(nopython=True)
 def smearings(lattice, number_of_smears):
     repeatedly_smeared_lattice = lattice.copy()
-    for i in number_of_smears:
+    for i in range(number_of_smears):
         repeatedly_smeared_lattice = smear_lattice(repeatedly_smeared_lattice, smearing_eps=1/12)
     return repeatedly_smeared_lattice
 
@@ -472,21 +506,23 @@ def main():
     Ms = matrices(N_mat)            #generate SU(3) matrix pool
     lattice = initialise_lattice(N, dim)        #initialize lattice
 
+    print('thermalizing...')
     for i in tqdm(range(2*Ncor)):
         metropolis_update(lattice , Ms)       #thermalize lattice for 2*Ncor steps
+    print('thermalization done')
 
-    #lattice = np.load('data/lattice imp=n.npy')
+    print('computing loops')
+    max_r = 5
+    min_t = 1
+    max_t = 5
+    W_planar_r_t, W_planar_r_t_err = Wilson(lattice, Ms, max_r, min_t, max_t)
+    print('loops done')
 
-    max_r = 3
-    min_t = 4
-    max_t = 6
-    W_planar_r_t, W_planar_r_t_err, radius = Wilson(lattice, Ms, max_r, min_t, max_t)
-
-    np.save('data/W_rt.npy', W_planar_r_t)
-    np.save('data/W_rt_err.npy', W_planar_r_t_err)
+    np.save(f'data/W_rt Ncf={Ncf}, t=[{min_t}-{max_t}], imp={improve}, smear={smearing}.npy', W_planar_r_t)
+    np.save(f'data/W_rt_err Ncf={Ncf}, t=[{min_t}-{max_t}], imp={improve}, smear={smearing}.npy', W_planar_r_t_err)
 
     radius = range(1, max_r)
-    np.save('data/radius.npy', radius)
+    np.save(f'data/radius Ncf={Ncf}, t=[{min_t}-{max_t}], imp={improve}, smear={smearing}.npy', radius)
 
     time_elapsed = (time.perf_counter() - time_start)
     print ("checkpoint %5.1f secs" % (time_elapsed))
