@@ -4,7 +4,7 @@ from tqdm import tqdm
 from numba import jit
 
 #choose 'n' for unimproved antion and 'y' otherwise
-improve = False
+improve = True
 #lattice smearing
 smearing = False
 #atoms per side of lattice
@@ -414,37 +414,38 @@ def Wilson(lattice, Ms, max_r, min_t, max_t):
     return W_planar_r_t, W_planar_r_t_err
 
 @jit(nopython=True)
-def gauge_covariant_derivative(lattice, point1, starting_direction):
-    link_up = call_link(point1, starting_direction, lattice, dagger=False)
+def gauge_covariant_derivative(lattice, point, starting_direction):
+    link_up = call_link(point, starting_direction, lattice, dagger=False)
     link_up = np.ascontiguousarray(link_up)
     
     smeared_link = np.zeros((3, 3), dtype=np.complex128)
     for direction in range(dim):
+        if direction != starting_direction:
 
-        link_right = call_link(point1, direction, lattice, dagger=False)
-        link_right = np.ascontiguousarray(link_right)
-        up(point1, direction)
-        link_right_up = call_link(point1, starting_direction, lattice, dagger=False)
-        link_right_up = np.ascontiguousarray(link_right_up)
-        up(point1, starting_direction)
-        down(point1, direction)
-        link_right_up_left = call_link(point1, direction, lattice, dagger=True)
-        link_right_up_left = np.ascontiguousarray(link_right_up_left)
+            link_right = call_link(point, direction, lattice, dagger=False)
+            link_right = np.ascontiguousarray(link_right)
+            up(point, direction)
+            link_right_up = call_link(point, starting_direction, lattice, dagger=False)
+            link_right_up = np.ascontiguousarray(link_right_up)
+            up(point, starting_direction)
+            down(point, direction)
+            link_right_up_left = call_link(point, direction, lattice, dagger=True)
+            link_right_up_left = np.ascontiguousarray(link_right_up_left)
 
-        down(point1, direction)
-        link_left_up_right = call_link(point1, direction, lattice, dagger=False)
-        link_left_up_right = np.ascontiguousarray(link_left_up_right)
-        down(point1, starting_direction)
-        link_left_up = call_link(point1, starting_direction, lattice, dagger=False)
-        link_left_up = np.ascontiguousarray(link_left_up)
-        link_left = call_link(point1, direction, lattice, dagger=True)
-        link_left = np.ascontiguousarray(link_left)
-        up(point1, direction)
+            down(point, direction)
+            link_left_up_right = call_link(point, direction, lattice, dagger=False)
+            link_left_up_right = np.ascontiguousarray(link_left_up_right)
+            down(point, starting_direction)
+            link_left_up = call_link(point, starting_direction, lattice, dagger=False)
+            link_left_up = np.ascontiguousarray(link_left_up)
+            link_left = call_link(point, direction, lattice, dagger=True)
+            link_left = np.ascontiguousarray(link_left)
+            up(point, direction)
 
-        loop_right = link_right @ link_right_up @ link_right_up_left
-        loop_left = link_left @ link_left_up @ link_left_up_right
+            loop_right = link_right @ link_right_up @ link_right_up_left
+            loop_left = link_left @ link_left_up @ link_left_up_right
 
-        smeared_link = smeared_link + (1/(u_0*a)**2)*(loop_right - 2*(u_0**2)*link_up + loop_left)
+            smeared_link = smeared_link + (1/(u_0*a)**2)*(loop_right - 2*(u_0**2)*link_up + loop_left)
 
     return smeared_link
 
@@ -464,17 +465,15 @@ def project_to_SU3(M):
 
 @jit(nopython=True)        
 def smear_lattice(lattice, smearing_eps):
-    smeared_lattice = np.empty((N, N, N, N, dim, 3, 3), dtype=np.complex128)
     for t in range(N):
         for x in range(N):
             for y in range(N):
                 for z in range(N):
                     point = np.array([t, x, y, z])
-                    for direction in range(dim):
-                        smeared_lattice[t, x, y, z, direction] = lattice[t, x, y, z, direction] + smearing_eps*(a**2)*gauge_covariant_derivative(lattice, point, direction)
-                        smeared_lattice[t, x, y, z, direction] = project_to_SU3(smeared_lattice[t, x, y, z, direction])
-
-    return smeared_lattice
+                    for direction in range(1, dim):     #don't smear time-pointing links
+                        lattice[t, x, y, z, direction] = lattice[t, x, y, z, direction] + smearing_eps*(a**2)*gauge_covariant_derivative(lattice, point, direction)
+                        lattice[t, x, y, z, direction] = project_to_SU3(lattice[t, x, y, z, direction])
+    return lattice
 
 @jit(nopython=True)
 def smearings(lattice, number_of_smears):
