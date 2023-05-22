@@ -140,6 +140,7 @@ for i in range(len(a)):
 #expected behaviour for unimproved action
 expo = [w_0**2*(1-((q*w_0)**2)/12) for q in a]
 expo_imp = [w_0**2*(1+((q*w_0)**4)/90) for q in a]
+expo_imp_transformed = [w_0**2*(1-((q*w_0)**4)/360) for q in a]
 
 plt.title(f'N={N}, $\omega_0$={w_0}, m={m}')
 plt.scatter(a, ws2, s=10, label='frequency')
@@ -147,6 +148,7 @@ plt.plot(a, expo, label='expected')
 plt.scatter(a, ws2_imp, s=10, label='frequency improved')
 plt.plot(a, expo_imp, label='expected improved')
 plt.scatter(a, ws2_imp_transformed, s=10, label='frequency improved no ghost')
+plt.plot(a, expo_imp_transformed, label='expected improved transformed')
 plt.xlabel('lattice spacing')
 plt.ylabel('$\omega^2$')
 plt.legend()

@@ -6,7 +6,7 @@ from numba import jit
 #choose 'n' for unimproved antion and 'y' otherwise
 improve = True
 #lattice smearing
-smearing = False
+smearing = True
 #atoms per side of lattice
 N = 8
 #parameter for creation of SU(3) matrices, affects lattice creation and metropolis acceptance ratio
@@ -350,7 +350,8 @@ def metropolis_update(lattice, matrices, hits=10):
                                     lattice[point[0], point[1], point[2], point[3], mu] = new_link
 
 
-
+#calculate arbitrary planar loops of side "duration" in the time direction and side "length" in the space directions, then average over space directions
+#since we are interested in the radial distance as a whole
 @jit(nopython=True)
 def planar_loops(lattice, point, length, duration):
     W_planar=0
@@ -379,7 +380,7 @@ def planar_loops(lattice, point, length, duration):
         W_planar += (1/3)*np.real(np.trace(loop))
     return W_planar/3
 
-#calculate wichever shape of wilson loops opver the whole lattice and average
+#calculate wichever shape of wilson loops over the whole lattice and average
 @jit(nopython=True)
 def planar_loop_over_lattice(lattice, matrices, length, duration):
     W_planar = np.zeros(Ncf, dtype=np.float64)
@@ -401,6 +402,7 @@ def planar_loop_over_lattice(lattice, matrices, length, duration):
     
     return W_planar/N**dim
 
+#calculate many such loops and save averages and errors
 @jit(nopython=True)
 def Wilson(lattice, Ms, max_r, min_t, max_t):
     W_planar_r_t = np.zeros((max_t, max_r))
@@ -413,14 +415,15 @@ def Wilson(lattice, Ms, max_r, min_t, max_t):
 
     return W_planar_r_t, W_planar_r_t_err
 
+#calculate the staples needed to smear the spatial links
 @jit(nopython=True)
 def gauge_covariant_derivative(lattice, point, starting_direction):
     link_up = call_link(point, starting_direction, lattice, dagger=False)
     link_up = np.ascontiguousarray(link_up)
     
     smeared_link = np.zeros((3, 3), dtype=np.complex128)
-    for direction in range(dim):
-        if direction != starting_direction:
+    for direction in range(1, dim):                         #don't smear with time links
+        if direction != starting_direction:                 #don't smear in the same direction as the link being smeared
 
             link_right = call_link(point, direction, lattice, dagger=False)
             link_right = np.ascontiguousarray(link_right)
@@ -449,6 +452,7 @@ def gauge_covariant_derivative(lattice, point, starting_direction):
 
     return smeared_link
 
+#projects a 3x3 matrix to an SU(3) matrix
 @jit(nopython=True)
 def project_to_SU3(M):
     M_dagger = dag(M)
@@ -463,6 +467,7 @@ def project_to_SU3(M):
 
     return SU3_projected
 
+#apply smearing and SU(3) projection to whole lattice
 @jit(nopython=True)        
 def smear_lattice(lattice, smearing_eps):
     for t in range(N):
@@ -475,6 +480,7 @@ def smear_lattice(lattice, smearing_eps):
                         lattice[t, x, y, z, direction] = project_to_SU3(lattice[t, x, y, z, direction])
     return lattice
 
+#apply smearing to whole lattice repeatedly
 @jit(nopython=True)
 def smearings(lattice, number_of_smears):
     repeatedly_smeared_lattice = lattice.copy()
@@ -482,10 +488,12 @@ def smearings(lattice, number_of_smears):
         repeatedly_smeared_lattice = smear_lattice(repeatedly_smeared_lattice, smearing_eps=1/12)
     return repeatedly_smeared_lattice
 
+#simple mean function
 @jit(nopython=True)
 def mean(data):
     return np.sum(data)/len(data)
 
+#simple standard deviation function
 @jit(nopython=True)
 def stdev(data, ddof=0):
     #calculate mean of data
